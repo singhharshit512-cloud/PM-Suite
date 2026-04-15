@@ -12,7 +12,7 @@ import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 
 export function Dashboard() {
-  const { user, googleAccessToken, syncTrigger, triggerSync, signInWithGoogle, clearToken } = useAuth();
+  const { user, hasCalendarAccess, connectCalendar, syncTrigger, triggerSync } = useAuth();
   const [meetingsTodayCount, setMeetingsTodayCount] = useState(0);
   const [nextMeeting, setNextMeeting] = useState<any>(null);
   const [openTasksCount, setOpenTasksCount] = useState(0);
@@ -25,8 +25,8 @@ export function Dashboard() {
   const handleSync = async () => {
     setIsSyncing(true);
     try {
-      if (!googleAccessToken) {
-        await signInWithGoogle();
+      if (!hasCalendarAccess) {
+        await connectCalendar();
       }
       triggerSync();
       toast.success('Calendar synced successfully');
@@ -72,8 +72,8 @@ export function Dashboard() {
   }, [user]);
 
   useEffect(() => {
-    if (googleAccessToken) {
-      fetchTodayMeetings(googleAccessToken)
+    if (user && hasCalendarAccess) {
+      fetchTodayMeetings(user.uid)
         .then((data) => {
           const events = data.items || [];
           setMeetingsTodayCount(events.length);
@@ -81,12 +81,9 @@ export function Dashboard() {
         })
         .catch((error) => {
           console.error(error);
-          if (error.message === 'UNAUTHORIZED') {
-            clearToken();
-          }
         });
 
-      fetchUpcomingMeetings(googleAccessToken)
+      fetchUpcomingMeetings(user.uid)
         .then((data) => {
           const events = data.items || [];
           const upcoming = events.filter((e: any) => {
@@ -104,12 +101,9 @@ export function Dashboard() {
         })
         .catch((error) => {
           console.error(error);
-          if (error.message === 'UNAUTHORIZED') {
-            clearToken();
-          }
         });
     }
-  }, [googleAccessToken, syncTrigger]);
+  }, [user, hasCalendarAccess, syncTrigger]);
 
   return (
     <div className="p-8 h-full overflow-auto bg-gray-50 dark:bg-gray-950">

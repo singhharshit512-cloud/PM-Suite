@@ -1,71 +1,80 @@
-export async function fetchTodayMeetings(accessToken: string) {
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
+
+export async function fetchTodayMeetings(userId: string) {
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
   const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString();
 
   try {
-    const response = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${startOfDay}&timeMax=${endOfDay}&singleEvents=true&orderBy=startTime`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        cache: 'no-store'
-      }
-    );
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    const refreshToken = userDoc.data()?.calendarRefreshToken;
+
+    if (!refreshToken) {
+      throw new Error('UNAUTHORIZED');
+    }
+
+    const response = await fetch('/api/calendar/events', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        refresh_token: refreshToken,
+        timeMin: startOfDay,
+        timeMax: endOfDay
+      })
+    });
 
     if (!response.ok) {
       if (response.status === 401) {
         throw new Error('UNAUTHORIZED');
       }
-      const errorData = await response.json().catch(() => null);
-      if (response.status === 404) {
-        console.warn('Calendar not found for user, returning empty events.');
-        return { items: [] };
-      }
-      console.error('Calendar API error:', errorData);
       throw new Error('Failed to fetch calendar events');
     }
 
     return await response.json();
   } catch (error) {
     console.error('Error fetching today meetings:', error);
-    throw error; // Rethrow to handle in component
+    throw error;
   }
 }
 
-export async function fetchUpcomingMeetings(accessToken: string) {
+export async function fetchUpcomingMeetings(userId: string) {
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
   const endOfNextWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7, 23, 59, 59).toISOString();
 
   try {
-    const response = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${startOfDay}&timeMax=${endOfNextWeek}&singleEvents=true&orderBy=startTime`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        cache: 'no-store'
-      }
-    );
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    const refreshToken = userDoc.data()?.calendarRefreshToken;
+
+    if (!refreshToken) {
+      throw new Error('UNAUTHORIZED');
+    }
+
+    const response = await fetch('/api/calendar/events', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        refresh_token: refreshToken,
+        timeMin: startOfDay,
+        timeMax: endOfNextWeek
+      })
+    });
 
     if (!response.ok) {
       if (response.status === 401) {
         throw new Error('UNAUTHORIZED');
       }
-      const errorData = await response.json().catch(() => null);
-      if (response.status === 404) {
-        console.warn('Calendar not found for user, returning empty events.');
-        return { items: [] };
-      }
-      console.error('Calendar API error:', errorData);
       throw new Error('Failed to fetch calendar events');
     }
 
     return await response.json();
   } catch (error) {
     console.error('Error fetching upcoming meetings:', error);
-    throw error; // Rethrow to handle in component
+    throw error;
   }
 }

@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, orderBy, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Task } from '../lib/types';
-import { format, isPast, isToday } from 'date-fns';
+import { format, isPast, isToday, isYesterday, isThisWeek, isTomorrow } from 'date-fns';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from '../components/ui/dialog';
@@ -12,8 +12,9 @@ import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Badge } from '../components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { toast } from 'sonner';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Search } from 'lucide-react';
 
 export function Tasks() {
   const { user } = useAuth();
@@ -33,6 +34,78 @@ export function Tasks() {
   const [editTaskTitle, setEditTaskTitle] = useState('');
   const [editTaskDesc, setEditTaskDesc] = useState('');
   const [editTaskDueDate, setEditTaskDueDate] = useState('');
+
+  // Filters
+  const [searchQuery, setSearchQuery] = useState('');
+  const [createdFilter, setCreatedFilter] = useState('all');
+  const [dueDateFilter, setDueDateFilter] = useState('all');
+  const [closedFilter, setClosedFilter] = useState('all');
+  const [meetingFilter, setMeetingFilter] = useState('all');
+  const [activeTab, setActiveTab] = useState('open');
+
+  const uniqueMeetings = Array.from(new Set([...openTasks, ...closedTasks].map(t => {
+    if (!t.description) return null;
+    const match = t.description.match(/From meeting: (.*?) on /);
+    return match ? match[1] : null;
+  }).filter(Boolean))) as string[];
+
+  const filterTasks = (tasks: Task[], isClosedTab: boolean) => {
+    return tasks.filter(task => {
+      // Search
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        const matchesTitle = task.title.toLowerCase().includes(query);
+        const matchesDesc = task.description?.toLowerCase().includes(query);
+        if (!matchesTitle && !matchesDesc) return false;
+      }
+
+      // Meeting filter
+      if (meetingFilter !== 'all') {
+        const match = task.description?.match(/From meeting: (.*?) on /);
+        const meetingName = match ? match[1] : null;
+        if (meetingName !== meetingFilter) return false;
+      }
+
+      // Created filter
+      if (createdFilter !== 'all' && task.createdAt) {
+        const createdDate = task.createdAt.toDate();
+        if (createdFilter === 'today' && !isToday(createdDate)) return false;
+        if (createdFilter === 'yesterday' && !isYesterday(createdDate)) return false;
+        if (createdFilter === 'thisWeek' && !isThisWeek(createdDate)) return false;
+        if (createdFilter === 'older' && isThisWeek(createdDate)) return false;
+      }
+
+      if (isClosedTab) {
+        // Closed filter
+        if (closedFilter !== 'all' && task.closedAt) {
+          const closedDate = task.closedAt.toDate();
+          if (closedFilter === 'today' && !isToday(closedDate)) return false;
+          if (closedFilter === 'yesterday' && !isYesterday(closedDate)) return false;
+          if (closedFilter === 'thisWeek' && !isThisWeek(closedDate)) return false;
+          if (closedFilter === 'older' && isThisWeek(closedDate)) return false;
+        }
+      } else {
+        // Due date filter
+        if (dueDateFilter !== 'all') {
+          if (dueDateFilter === 'noDueDate' && task.dueDate) return false;
+          if (dueDateFilter !== 'noDueDate' && !task.dueDate) return false;
+          
+          if (task.dueDate) {
+            const dueDate = task.dueDate.toDate();
+            if (dueDateFilter === 'overdue' && (!isPast(dueDate) || isToday(dueDate))) return false;
+            if (dueDateFilter === 'today' && !isToday(dueDate)) return false;
+            if (dueDateFilter === 'tomorrow' && !isTomorrow(dueDate)) return false;
+            if (dueDateFilter === 'upcoming' && (isPast(dueDate) || isToday(dueDate) || isTomorrow(dueDate))) return false;
+          }
+        }
+      }
+
+      return true;
+    });
+  };
+
+  const filteredOpenTasks = filterTasks(openTasks, false);
+  const filteredClosedTasks = filterTasks(closedTasks, true);
 
   const openTaskModal = (task: Task) => {
     setSelectedTask(task);
@@ -184,21 +257,99 @@ export function Tasks() {
           </Dialog>
         </div>
 
-        <Tabs defaultValue="open" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="mb-6">
-            <TabsTrigger value="open">Open Tasks ({openTasks.length})</TabsTrigger>
-            <TabsTrigger value="closed">Closed Tasks ({closedTasks.length})</TabsTrigger>
+            <TabsTrigger value="open">Open Tasks ({filteredOpenTasks.length})</TabsTrigger>
+            <TabsTrigger value="closed">Closed Tasks ({filteredClosedTasks.length})</TabsTrigger>
           </TabsList>
           
+          <div className="mb-6 space-y-4 bg-white dark:bg-gray-900 p-4 rounded-lg border border-gray-200 dark:border-gray-800">
+            <div className="flex items-center space-x-2">
+              <Search className="h-4 w-4 text-gray-500" />
+              <Input 
+                placeholder="Search tasks..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="flex-1"
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-1">
+                <Label className="text-xs text-gray-500">Meeting</Label>
+                <Select value={meetingFilter} onValueChange={setMeetingFilter}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Meetings" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Meetings</SelectItem>
+                    {uniqueMeetings.map(m => (
+                      <SelectItem key={m} value={m}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-gray-500">Date Created</Label>
+                <Select value={createdFilter} onValueChange={setCreatedFilter}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Any Time" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Any Time</SelectItem>
+                    <SelectItem value="today">Today</SelectItem>
+                    <SelectItem value="yesterday">Yesterday</SelectItem>
+                    <SelectItem value="thisWeek">This Week</SelectItem>
+                    <SelectItem value="older">Older</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              {activeTab === 'open' ? (
+                <div className="space-y-1">
+                  <Label className="text-xs text-gray-500">Due Date</Label>
+                  <Select value={dueDateFilter} onValueChange={setDueDateFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Any Due Date" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Any Due Date</SelectItem>
+                      <SelectItem value="overdue">Overdue</SelectItem>
+                      <SelectItem value="today">Today</SelectItem>
+                      <SelectItem value="tomorrow">Tomorrow</SelectItem>
+                      <SelectItem value="upcoming">Upcoming</SelectItem>
+                      <SelectItem value="noDueDate">No Due Date</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <Label className="text-xs text-gray-500">Date Closed</Label>
+                  <Select value={closedFilter} onValueChange={setClosedFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Any Time" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Any Time</SelectItem>
+                      <SelectItem value="today">Today</SelectItem>
+                      <SelectItem value="yesterday">Yesterday</SelectItem>
+                      <SelectItem value="thisWeek">This Week</SelectItem>
+                      <SelectItem value="older">Older</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+          </div>
+          
           <TabsContent value="open" className="space-y-4">
-            {openTasks.length === 0 ? (
+            {filteredOpenTasks.length === 0 ? (
               <Card>
                 <CardContent className="flex flex-col items-center justify-center py-12">
-                  <p className="text-gray-500">No open tasks. You're all caught up!</p>
+                  <p className="text-gray-500">No open tasks match your filters.</p>
                 </CardContent>
               </Card>
             ) : (
-              openTasks.map(task => {
+              filteredOpenTasks.map(task => {
                 const isDueToday = task.dueDate && isToday(task.dueDate.toDate());
                 const isOverdue = task.dueDate && isPast(task.dueDate.toDate()) && !isDueToday;
                 
@@ -263,14 +414,14 @@ export function Tasks() {
           </TabsContent>
           
           <TabsContent value="closed" className="space-y-4">
-            {closedTasks.length === 0 ? (
+            {filteredClosedTasks.length === 0 ? (
               <Card>
                 <CardContent className="flex flex-col items-center justify-center py-12">
-                  <p className="text-gray-500">No closed tasks yet.</p>
+                  <p className="text-gray-500">No closed tasks match your filters.</p>
                 </CardContent>
               </Card>
             ) : (
-              closedTasks.map(task => (
+              filteredClosedTasks.map(task => (
                 <Card key={task.id} className="opacity-75 cursor-pointer hover:opacity-100 transition-opacity" onClick={() => openTaskModal(task)}>
                   <CardContent className="p-6">
                     <div className="flex justify-between items-start">

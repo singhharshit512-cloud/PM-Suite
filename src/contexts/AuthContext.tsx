@@ -12,6 +12,8 @@ interface AuthContextType {
   logout: () => Promise<void>;
   triggerSync: () => void;
   clearToken: () => void;
+  connectCalendar: () => Promise<void>;
+  hasCalendarAccess: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -21,24 +23,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(() => localStorage.getItem('googleAccessToken'));
   const [syncTrigger, setSyncTrigger] = useState(0);
+  const [hasCalendarAccess, setHasCalendarAccess] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       setLoading(false);
+      
+      if (currentUser) {
+        // Check if user has refresh token in Firestore
+        const userRef = doc(db, 'users', currentUser.uid);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists() && userSnap.data().calendarRefreshToken) {
+          setHasCalendarAccess(true);
+        }
+      } else {
+        setHasCalendarAccess(false);
+      }
     });
 
     return unsubscribe;
   }, []);
 
-  // Auto sync every hour
+  // Auto sync every 15 minutes
   useEffect(() => {
-    if (!user || !googleAccessToken) return;
+    if (!user || !hasCalendarAccess) return;
     const interval = setInterval(() => {
       setSyncTrigger(prev => prev + 1);
-    }, 60 * 60 * 1000); // 1 hour
+    }, 15 * 60 * 1000); // 15 minutes
     return () => clearInterval(interval);
-  }, [user, googleAccessToken]);
+  }, [user, hasCalendarAccess]);
 
   const triggerSync = () => {
     setSyncTrigger(prev => prev + 1);
@@ -47,6 +61,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const clearToken = () => {
     setGoogleAccessToken(null);
     localStorage.removeItem('googleAccessToken');
+  };
+
+  const connectCalendar = async () => {
+    if (!user) return;
+    
+    try {
+      const response = await fetch('/api/auth/url');
+      if (!response.ok) throw new Error('Failed to get auth URL');
+      const { url } = await response.json();
+
+      const authWindow = window.open(url, 'oauth_popup', 'width=600,height=700');
+      
+      if (!authWindow) {
+        alert('Please allow popups for this site to connect your calendar.');
+        return;
+      }
+
+      return new Promise<void>((resolve, reject) => {
+        const handleMessage = async (event: MessageEvent) => {
+          if (!event.origin.endsWith('.run.app') && !event.origin.includes('localhost')) return;
+          
+          if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+            window.removeEventListener('message', handleMessage);
+            const tokens = event.data.tokens;
+            
+            if (tokens.refresh_token) {
+              const userRef = doc(db, 'users', user.uid);
+              await setDoc(userRef, {
+                calendarRefreshToken: tokens.refresh_token
+              }, { merge: true });
+              setHasCalendarAccess(true);
+              triggerSync();
+              resolve();
+            } else {
+              reject(new Error('No refresh token received. Please revoke access in your Google Account and try again.'));
+            }
+          }
+        };
+        window.addEventListener('message', handleMessage);
+      });
+    } catch (error) {
+      console.error('Error connecting calendar:', error);
+      throw error;
+    }
   };
 
   const signInWithGoogle = async () => {
@@ -72,6 +130,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           photoURL: user.photoURL,
           createdAt: serverTimestamp()
         });
+      } else if (userSnap.data().calendarRefreshToken) {
+        setHasCalendarAccess(true);
       }
     } catch (error: any) {
       console.error("Error signing in with Google", error);
@@ -83,6 +143,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await signOut(auth);
       setGoogleAccessToken(null);
+      setHasCalendarAccess(false);
       localStorage.removeItem('googleAccessToken');
     } catch (error) {
       console.error("Error signing out", error);
@@ -90,7 +151,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, googleAccessToken, syncTrigger, signInWithGoogle, logout, triggerSync, clearToken }}>
+    <AuthContext.Provider value={{ user, loading, googleAccessToken, syncTrigger, signInWithGoogle, logout, triggerSync, clearToken, connectCalendar, hasCalendarAccess }}>
       {!loading && children}
     </AuthContext.Provider>
   );

@@ -18,7 +18,7 @@ import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 
 export function Notes() {
-  const { user, googleAccessToken, syncTrigger, clearToken } = useAuth();
+  const { user, hasCalendarAccess, connectCalendar, syncTrigger } = useAuth();
   const navigate = useNavigate();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
@@ -93,17 +93,17 @@ export function Notes() {
   }, [user]);
 
   useEffect(() => {
-    if (googleAccessToken) {
-      fetchUpcomingMeetings(googleAccessToken)
+    if (user && hasCalendarAccess) {
+      fetchUpcomingMeetings(user.uid)
         .then(data => setCalendarEvents(data.items || []))
         .catch((error) => {
           console.error(error);
           if (error.message === 'UNAUTHORIZED') {
-            clearToken();
+            // Handle unauthorized if needed, e.g., prompt to reconnect
           }
         });
     }
-  }, [googleAccessToken, syncTrigger]);
+  }, [user, hasCalendarAccess, syncTrigger]);
 
   useEffect(() => {
     if (!selectedMeetingId || !user) {
@@ -544,6 +544,17 @@ export function Notes() {
         </div>
         
         <div className="flex-1 overflow-y-auto p-2 space-y-6">
+          {!hasCalendarAccess && (
+            <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800/50 mb-4 text-center">
+              <CalendarIcon className="h-8 w-8 text-blue-500 mx-auto mb-2" />
+              <h3 className="text-sm font-medium text-blue-900 dark:text-blue-100 mb-1">Connect Calendar</h3>
+              <p className="text-xs text-blue-700 dark:text-blue-300 mb-3">Sync your Google Calendar to take notes for upcoming meetings.</p>
+              <Button size="sm" className="w-full bg-blue-600 hover:bg-blue-700 text-white" onClick={connectCalendar}>
+                Connect Google Calendar
+              </Button>
+            </div>
+          )}
+          
           {today.length === 0 && upcoming.length === 0 && sortedPastKeys.length === 0 ? (
             <div className="text-center p-4 text-gray-500 text-sm">No meetings found.</div>
           ) : (
