@@ -34,8 +34,10 @@ export async function fetchTodayMeetings(userId: string) {
     }
 
     return await response.json();
-  } catch (error) {
-    console.error('Error fetching today meetings:', error);
+  } catch (error: any) {
+    if (error.message !== 'UNAUTHORIZED') {
+      console.error('Error fetching today meetings:', error);
+    }
     throw error;
   }
 }
@@ -73,8 +75,10 @@ export async function fetchUpcomingMeetings(userId: string) {
     }
 
     return await response.json();
-  } catch (error) {
-    console.error('Error fetching upcoming meetings:', error);
+  } catch (error: any) {
+    if (error.message !== 'UNAUTHORIZED') {
+      console.error('Error fetching upcoming meetings:', error);
+    }
     throw error;
   }
 }

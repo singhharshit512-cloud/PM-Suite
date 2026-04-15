@@ -13,6 +13,7 @@ interface AuthContextType {
   triggerSync: () => void;
   clearToken: () => void;
   connectCalendar: () => Promise<void>;
+  clearCalendarAccess: () => Promise<void>;
   hasCalendarAccess: boolean;
 }
 
@@ -61,6 +62,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const clearToken = () => {
     setGoogleAccessToken(null);
     localStorage.removeItem('googleAccessToken');
+  };
+
+  const clearCalendarAccess = async () => {
+    if (!user) return;
+    try {
+      const userRef = doc(db, 'users', user.uid);
+      await setDoc(userRef, {
+        calendarRefreshToken: null
+      }, { merge: true });
+      setHasCalendarAccess(false);
+    } catch (error) {
+      console.error("Error clearing calendar access", error);
+    }
   };
 
   const connectCalendar = async () => {
@@ -151,7 +165,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, googleAccessToken, syncTrigger, signInWithGoogle, logout, triggerSync, clearToken, connectCalendar, hasCalendarAccess }}>
+    <AuthContext.Provider value={{ user, loading, googleAccessToken, syncTrigger, signInWithGoogle, logout, triggerSync, clearToken, connectCalendar, clearCalendarAccess, hasCalendarAccess }}>
       {!loading && children}
     </AuthContext.Provider>
   );

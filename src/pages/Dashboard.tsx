@@ -12,7 +12,7 @@ import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 
 export function Dashboard() {
-  const { user, hasCalendarAccess, connectCalendar, syncTrigger, triggerSync } = useAuth();
+  const { user, hasCalendarAccess, connectCalendar, clearCalendarAccess, syncTrigger, triggerSync } = useAuth();
   const [meetingsTodayCount, setMeetingsTodayCount] = useState(0);
   const [nextMeeting, setNextMeeting] = useState<any>(null);
   const [openTasksCount, setOpenTasksCount] = useState(0);
@@ -80,7 +80,12 @@ export function Dashboard() {
           setTodayEvents(events);
         })
         .catch((error) => {
-          console.error(error);
+          if (error.message === 'UNAUTHORIZED') {
+            clearCalendarAccess();
+            toast.error('Calendar access expired. Please reconnect.');
+          } else {
+            console.error(error);
+          }
         });
 
       fetchUpcomingMeetings(user.uid)
@@ -100,7 +105,11 @@ export function Dashboard() {
           }
         })
         .catch((error) => {
-          console.error(error);
+          if (error.message === 'UNAUTHORIZED') {
+            clearCalendarAccess();
+          } else {
+            console.error(error);
+          }
         });
     }
   }, [user, hasCalendarAccess, syncTrigger]);

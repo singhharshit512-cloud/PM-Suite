@@ -99,6 +99,16 @@ app.post('/api/calendar/events', async (req, res) => {
 
     res.json(response.data);
   } catch (error: any) {
+    // Check if the error is due to an invalid or expired refresh token
+    if (
+      error.message === 'invalid_grant' || 
+      error.response?.data?.error === 'invalid_grant' ||
+      error.message?.includes('invalid_grant')
+    ) {
+      console.warn('Calendar token expired or revoked (invalid_grant)');
+      return res.status(401).json({ error: 'invalid_grant', details: 'Token has been expired or revoked.' });
+    }
+    
     console.error('Error fetching calendar events', error);
     res.status(500).json({ error: 'Failed to fetch calendar events', details: error.message });
   }

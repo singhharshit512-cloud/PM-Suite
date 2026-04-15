@@ -18,7 +18,7 @@ import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 
 export function Notes() {
-  const { user, hasCalendarAccess, connectCalendar, syncTrigger } = useAuth();
+  const { user, hasCalendarAccess, connectCalendar, clearCalendarAccess, syncTrigger } = useAuth();
   const navigate = useNavigate();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
@@ -97,9 +97,11 @@ export function Notes() {
       fetchUpcomingMeetings(user.uid)
         .then(data => setCalendarEvents(data.items || []))
         .catch((error) => {
-          console.error(error);
           if (error.message === 'UNAUTHORIZED') {
-            // Handle unauthorized if needed, e.g., prompt to reconnect
+            clearCalendarAccess();
+            toast.error('Calendar access expired. Please reconnect.');
+          } else {
+            console.error(error);
           }
         });
     }
