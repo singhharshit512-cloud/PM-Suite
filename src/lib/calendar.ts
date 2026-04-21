@@ -7,10 +7,11 @@ export async function fetchTodayMeetings(userId: string) {
   const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString();
 
   try {
+    const accessToken = localStorage.getItem('googleAccessToken');
     const userDoc = await getDoc(doc(db, 'users', userId));
     const refreshToken = userDoc.data()?.calendarRefreshToken;
 
-    if (!refreshToken) {
+    if (!accessToken && !refreshToken) {
       throw new Error('UNAUTHORIZED');
     }
 
@@ -21,6 +22,7 @@ export async function fetchTodayMeetings(userId: string) {
       },
       body: JSON.stringify({
         refresh_token: refreshToken,
+        access_token: accessToken,
         timeMin: startOfDay,
         timeMax: endOfDay
       })
@@ -30,10 +32,19 @@ export async function fetchTodayMeetings(userId: string) {
       if (response.status === 401) {
         throw new Error('UNAUTHORIZED');
       }
-      throw new Error('Failed to fetch calendar events');
+      let errorDetail = 'Failed to fetch calendar events';
+      try {
+          const errData = await response.json();
+          if (errData.details) errorDetail += `: ${errData.details}`;
+      } catch (e) {}
+      throw new Error(errorDetail);
     }
 
-    return await response.json();
+    const text = await response.text();
+    if (text.trim().startsWith('<!') || text.trim().startsWith('<html')) {
+        throw new Error("Received an HTML response instead of JSON. The application session may have expired or cookies are blocked. Please refresh or open the app in a new tab.");
+    }
+    return JSON.parse(text);
   } catch (error: any) {
     if (error.message !== 'UNAUTHORIZED') {
       console.error('Error fetching today meetings:', error);
@@ -48,10 +59,11 @@ export async function fetchUpcomingMeetings(userId: string) {
   const endOfNextWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7, 23, 59, 59).toISOString();
 
   try {
+    const accessToken = localStorage.getItem('googleAccessToken');
     const userDoc = await getDoc(doc(db, 'users', userId));
     const refreshToken = userDoc.data()?.calendarRefreshToken;
 
-    if (!refreshToken) {
+    if (!accessToken && !refreshToken) {
       throw new Error('UNAUTHORIZED');
     }
 
@@ -62,6 +74,7 @@ export async function fetchUpcomingMeetings(userId: string) {
       },
       body: JSON.stringify({
         refresh_token: refreshToken,
+        access_token: accessToken,
         timeMin: startOfDay,
         timeMax: endOfNextWeek
       })
@@ -71,10 +84,19 @@ export async function fetchUpcomingMeetings(userId: string) {
       if (response.status === 401) {
         throw new Error('UNAUTHORIZED');
       }
-      throw new Error('Failed to fetch calendar events');
+      let errorDetail = 'Failed to fetch calendar events';
+      try {
+          const errData = await response.json();
+          if (errData.details) errorDetail += `: ${errData.details}`;
+      } catch (e) {}
+      throw new Error(errorDetail);
     }
 
-    return await response.json();
+    const text = await response.text();
+    if (text.trim().startsWith('<!') || text.trim().startsWith('<html')) {
+        throw new Error("Received an HTML response instead of JSON. The application session may have expired or cookies are blocked. Please refresh or open the app in a new tab.");
+    }
+    return JSON.parse(text);
   } catch (error: any) {
     if (error.message !== 'UNAUTHORIZED') {
       console.error('Error fetching upcoming meetings:', error);

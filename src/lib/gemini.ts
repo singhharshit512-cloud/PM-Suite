@@ -1,6 +1,11 @@
 import { GoogleGenAI } from '@google/genai';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const getBaseUrl = () => typeof window !== 'undefined' ? `${window.location.origin}/api/gemini-proxy` : 'http://localhost:3000/api/gemini-proxy';
+
+const ai = new GoogleGenAI({ 
+  apiKey: 'placeholder', 
+  httpOptions: { baseUrl: getBaseUrl() } 
+});
 
 export async function generateActionItems(
   meetingTitle: string,

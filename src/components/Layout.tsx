@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from './ThemeProvider';
-import { Calendar, CheckSquare, LayoutDashboard, LogOut, Menu, X, ChevronLeft, ChevronRight, Moon, Sun } from 'lucide-react';
+import { Calendar, CheckSquare, LayoutDashboard, LogOut, Menu, X, ChevronLeft, ChevronRight, Moon, Sun, MessageSquare } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from './ui/dialog';
+import { Chatbot } from './Chatbot';
 
 export function Layout() {
   const { user, logout } = useAuth();
@@ -68,6 +69,17 @@ export function Layout() {
           >
             <CheckSquare className="mr-3 h-5 w-5" />
             Tasks
+          </NavLink>
+          <NavLink
+            to="/cowork"
+            className={({ isActive }) =>
+              `flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                isActive ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-100'
+              }`
+            }
+          >
+            <MessageSquare className="mr-3 h-5 w-5" />
+            Cowork
           </NavLink>
         </nav>
 
@@ -138,6 +150,8 @@ export function Layout() {
         </div>
         <Outlet />
       </main>
+
+      <Chatbot />
 
       <Dialog open={isLogoutModalOpen} onOpenChange={setIsLogoutModalOpen}>
         <DialogContent>

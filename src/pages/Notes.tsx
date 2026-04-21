@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Label } from '../components/ui/label';
 import { Badge } from '../components/ui/badge';
 import { RichTextEditor } from '../components/RichTextEditor';
-import { Search, Plus, Calendar as CalendarIcon, Users, Sparkles, Check, Trash2, ArrowRight, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Plus, Calendar as CalendarIcon, Users, Sparkles, Check, Trash2, ArrowRight, Menu, X, ChevronLeft, ChevronRight, Bot, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 
@@ -37,6 +37,12 @@ export function Notes() {
   
   const [aiPersonName, setAiPersonName] = useState('');
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
+  const [isSendingBot, setIsSendingBot] = useState(false);
+  
+  const [isTranscriptModalOpen, setIsTranscriptModalOpen] = useState(false);
+  const [currentTranscript, setCurrentTranscript] = useState('');
+  const [isFetchingTranscript, setIsFetchingTranscript] = useState(false);
+  const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -187,6 +193,136 @@ export function Notes() {
     }
   };
 
+  const handleSendBot = async () => {
+    if (!selectedMeetingId || !user) return;
+    const meeting = meetings.find(m => m.id === selectedMeetingId);
+    if (!meeting || !meeting.hangoutLink) {
+      toast.error('No Google Meet link found for this meeting.');
+      return;
+    }
+
+    setIsSendingBot(true);
+    try {
+      const response = await fetch('/api/bot/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meetingUrl: meeting.hangoutLink,
+          meetingId: meeting.id,
+          userId: user.uid
+        })
+      });
+
+      const text = await response.text();
+      let data: any = {};
+      try {
+        if (!text.trim().startsWith('<!') && !text.trim().startsWith('<html')) {
+           data = JSON.parse(text);
+        } else {
+           throw new Error("Received HTML response from server. Session may be expired.");
+        }
+      } catch (e: any) {
+        throw new Error(e.message || "Failed to parse API response");
+      }
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to send bot');
+      }
+
+      if (data.botId) {
+        await updateDoc(doc(db, 'meetings', meeting.id), {
+          botId: data.botId
+        });
+      }
+
+      toast.success('AI Note Taker is joining the meeting!');
+    } catch (error: any) {
+      console.error('Bot join error:', error);
+      toast.error(`Failed to send bot: ${error.message}`);
+    } finally {
+      setIsSendingBot(false);
+    }
+  };
+
+  const handleFetchTranscript = async () => {
+    if (!selectedMeetingId || !user) return;
+    const meeting = meetings.find(m => m.id === selectedMeetingId);
+    if (!meeting || !meeting.botId) {
+      toast.error('No bot was sent to this meeting or botId is missing.');
+      return;
+    }
+
+    setIsFetchingTranscript(true);
+    setCurrentTranscript('');
+    try {
+      const response = await fetch(`/api/bot/${meeting.botId}/transcript`);
+      const text = await response.text();
+      let data: any = {};
+      try {
+        if (!text.trim().startsWith('<!') && !text.trim().startsWith('<html')) {
+           data = JSON.parse(text);
+        } else {
+           throw new Error("Received HTML response from server. Session may be expired.");
+        }
+      } catch (e: any) {
+        throw new Error(e.message || "Failed to parse API response");
+      }
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to fetch transcript');
+      }
+      
+      if (!data.transcript) {
+        toast.info('No transcript available yet. Please check back later.');
+        return;
+      }
+      setCurrentTranscript(data.transcript);
+      setIsTranscriptModalOpen(true);
+    } catch (error: any) {
+      console.error(error);
+      toast.error('Failed to fetch transcript: ' + error.message);
+    } finally {
+      setIsFetchingTranscript(false);
+    }
+  };
+
+  const handleGenerateNotesFromTranscript = async () => {
+    if (!selectedMeetingId || !user || !currentTranscript) return;
+    
+    setIsGeneratingNotes(true);
+    try {
+      const response = await fetch('/api/bot/generate-notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meetingId: selectedMeetingId,
+          userId: user.uid,
+          transcript: currentTranscript
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate notes');
+      }
+      
+      if (data.content) {
+        await saveNote(data.content);
+        setNoteContent(data.content);
+      }
+      
+      toast.success('Notes generated and saved successfully');
+      setIsTranscriptModalOpen(false);
+      setCurrentTranscript('');
+    } catch (error: any) {
+      console.error(error);
+      toast.error('Failed to generate notes: ' + error.message);
+    } finally {
+      setIsGeneratingNotes(false);
+    }
+  };
+
   const saveNote = async (contentToSave: string) => {
     if (!user || !selectedMeetingId) return;
 
@@ -265,6 +401,7 @@ export function Notes() {
         startTime: format(new Date(event.start.dateTime || event.start.date), 'h:mm a'),
         endTime: event.end ? format(new Date(event.end.dateTime || event.end.date), 'h:mm a') : '',
         googleEventId: event.id,
+        hangoutLink: event.hangoutLink || null,
         participants,
         isOffline: false,
         createdAt: serverTimestamp()
@@ -288,7 +425,7 @@ export function Notes() {
       const participantNames = meeting.participants.map(p => p.name).join(', ');
       const newItems = await generateActionItems(
         meeting.title,
-        format(meeting.date.toDate(), 'yyyy-MM-dd'),
+        format(meeting.date?.toDate() || new Date(), 'yyyy-MM-dd'),
         participantNames,
         noteContent,
         aiPersonName
@@ -384,7 +521,7 @@ export function Notes() {
     meetings.forEach(m => {
       if (m.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
           m.participants.some(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()))) {
-        items.push({ type: 'meeting', data: m, date: m.date.toDate() });
+        items.push({ type: 'meeting', data: m, date: m.date?.toDate() || new Date() });
       }
     });
 
@@ -455,7 +592,7 @@ export function Notes() {
         >
           <div className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate">{m.title}</div>
           <div className="flex items-center justify-between mt-1">
-            <span className="text-xs text-gray-500 dark:text-gray-400">{m.startTime || format(m.date.toDate(), 'h:mm a')}</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">{m.startTime || format(m.date?.toDate() || new Date(), 'h:mm a')}</span>
             <div className="flex items-center gap-2">
               <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
                 {m.isOffline ? 'Offline' : 'Calendar'}
@@ -629,7 +766,7 @@ export function Notes() {
                   <div>
                     <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{selectedMeeting.title}</h1>
                     <div className="flex items-center mt-2 text-sm text-gray-500 dark:text-gray-400 space-x-4">
-                      <span className="flex items-center"><CalendarIcon className="h-4 w-4 mr-1" /> {format(selectedMeeting.date.toDate(), 'EEEE, MMMM d, yyyy')}</span>
+                      <span className="flex items-center"><CalendarIcon className="h-4 w-4 mr-1" /> {format(selectedMeeting.date?.toDate() || new Date(), 'EEEE, MMMM d, yyyy')}</span>
                       {selectedMeeting.startTime && <span>{selectedMeeting.startTime} {selectedMeeting.endTime ? `- ${selectedMeeting.endTime}` : ''}</span>}
                     </div>
                   </div>
@@ -675,6 +812,27 @@ export function Notes() {
                         {p.name}
                       </Badge>
                     ))}
+                  </div>
+                )}
+                
+                {!selectedMeeting.isOffline && selectedMeeting.hangoutLink && (
+                  <div className="mt-4 flex gap-2">
+                    <Button 
+                      onClick={handleSendBot} 
+                      disabled={isSendingBot}
+                      className="bg-purple-600 hover:bg-purple-700 text-white"
+                    >
+                      {isSendingBot ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Bot className="h-4 w-4 mr-2" />}
+                      Send AI Note Taker to Meeting
+                    </Button>
+                    <Button 
+                      onClick={handleFetchTranscript} 
+                      disabled={isFetchingTranscript}
+                      variant="outline"
+                    >
+                      {isFetchingTranscript ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                      Fetch Transcript
+                    </Button>
                   </div>
                 )}
               </div>
@@ -759,6 +917,30 @@ export function Notes() {
           </div>
         )}
       </div>
+
+      <Dialog open={isTranscriptModalOpen} onOpenChange={setIsTranscriptModalOpen}>
+        <DialogContent className="sm:max-w-[700px] h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Meeting Transcript</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto p-4 bg-gray-50 dark:bg-gray-900 rounded-md border text-sm whitespace-pre-wrap font-mono">
+            {currentTranscript}
+          </div>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setIsTranscriptModalOpen(false)}>
+              Close
+            </Button>
+            <Button 
+              onClick={handleGenerateNotesFromTranscript}
+              disabled={isGeneratingNotes}
+              className="bg-purple-600 hover:bg-purple-700 text-white"
+            >
+              {isGeneratingNotes ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
+              Create Notes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

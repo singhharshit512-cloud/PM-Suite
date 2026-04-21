@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, onAuthStateChanged, signInWithPopup, signOut, GoogleAuthProvider } from 'firebase/auth';
+import { User, onAuthStateChanged, signInWithPopup, signOut, GoogleAuthProvider, createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithCredential } from 'firebase/auth';
 import { auth, googleProvider, db } from '../firebase';
 import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 
@@ -9,6 +9,8 @@ interface AuthContextType {
   googleAccessToken: string | null;
   syncTrigger: number;
   signInWithGoogle: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  registerWithEmail: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   triggerSync: () => void;
   clearToken: () => void;
@@ -83,7 +85,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const response = await fetch('/api/auth/url');
       if (!response.ok) throw new Error('Failed to get auth URL');
-      const { url } = await response.json();
+      const text = await response.text();
+      let url = "";
+      try {
+        if (!text.trim().startsWith('<!') && !text.trim().startsWith('<html')) {
+           url = JSON.parse(text).url;
+        } else {
+           throw new Error("Received HTML response from server. Session may be expired.");
+        }
+      } catch (e: any) {
+        throw new Error("Failed to parse auth URL response.");
+      }
 
       const authWindow = window.open(url, 'oauth_popup', 'width=600,height=700');
       
@@ -123,6 +135,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithGoogle = async () => {
     try {
+      googleProvider.addScope('https://www.googleapis.com/auth/calendar.readonly');
+      googleProvider.addScope('https://www.googleapis.com/auth/drive.readonly');
+      googleProvider.addScope('https://www.googleapis.com/auth/drive.file');
+      googleProvider.addScope('https://www.googleapis.com/auth/documents');
+      
       const result = await signInWithPopup(auth, googleProvider);
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (credential?.accessToken) {
@@ -144,11 +161,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           photoURL: user.photoURL,
           createdAt: serverTimestamp()
         });
-      } else if (userSnap.data().calendarRefreshToken) {
+      }
+      
+      // Set to true because they just granted via popup
+      if (credential?.accessToken) {
         setHasCalendarAccess(true);
+        triggerSync();
       }
     } catch (error: any) {
       console.error("Error signing in with Google", error);
+      throw error;
+    }
+  };
+
+  const signInWithEmail = async (email: string, password: string) => {
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (error: any) {
+      console.error("Error signing in with email", error);
+      throw error;
+    }
+  };
+
+  const registerWithEmail = async (email: string, password: string) => {
+    try {
+      const result = await createUserWithEmailAndPassword(auth, email, password);
+      const user = result.user;
+      
+      // Persist user in Firestore
+      const userRef = doc(db, 'users', user.uid);
+      await setDoc(userRef, {
+        uid: user.uid,
+        email: user.email,
+        displayName: email.split('@')[0], // Default display name
+        photoURL: null,
+        createdAt: serverTimestamp()
+      });
+    } catch (error: any) {
+      console.error("Error registering with email", error);
       throw error;
     }
   };
@@ -165,7 +215,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, googleAccessToken, syncTrigger, signInWithGoogle, logout, triggerSync, clearToken, connectCalendar, clearCalendarAccess, hasCalendarAccess }}>
+    <AuthContext.Provider value={{ user, loading, googleAccessToken, syncTrigger, signInWithGoogle, signInWithEmail, registerWithEmail, logout, triggerSync, clearToken, connectCalendar, clearCalendarAccess, hasCalendarAccess }}>
       {!loading && children}
     </AuthContext.Provider>
   );

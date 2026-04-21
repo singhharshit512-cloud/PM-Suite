@@ -14,6 +14,8 @@ export interface Meeting {
   startTime: string;
   endTime: string;
   googleEventId: string | null;
+  hangoutLink?: string | null;
+  botId?: string;
   participants: { name: string; email: string }[];
   isOffline: boolean;
   createdAt: any;

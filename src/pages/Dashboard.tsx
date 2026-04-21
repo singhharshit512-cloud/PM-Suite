@@ -49,7 +49,7 @@ export function Dashboard() {
       const dueToday: Task[] = [];
       snapshot.forEach((doc) => {
         const task = { id: doc.id, ...doc.data() } as Task;
-        if (task.dueDate && isToday(task.dueDate.toDate())) {
+        if (task.dueDate && isToday(task.dueDate?.toDate() || new Date())) {
           dueToday.push(task);
         }
       });
@@ -231,7 +231,7 @@ export function Dashboard() {
                       <div>
                         <p className="text-sm font-medium leading-none">{task.title}</p>
                         <p className="text-xs text-muted-foreground mt-1">
-                          Created {format(task.createdAt.toDate(), 'MMM d')}
+                          Created {format(task.createdAt?.toDate() || new Date(), 'MMM d')}
                         </p>
                       </div>
                       <Link to="/tasks" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">

@@ -68,7 +68,7 @@ export function Tasks() {
 
       // Created filter
       if (createdFilter !== 'all' && task.createdAt) {
-        const createdDate = task.createdAt.toDate();
+        const createdDate = task.createdAt?.toDate() || new Date();
         if (createdFilter === 'today' && !isToday(createdDate)) return false;
         if (createdFilter === 'yesterday' && !isYesterday(createdDate)) return false;
         if (createdFilter === 'thisWeek' && !isThisWeek(createdDate)) return false;
@@ -78,7 +78,7 @@ export function Tasks() {
       if (isClosedTab) {
         // Closed filter
         if (closedFilter !== 'all' && task.closedAt) {
-          const closedDate = task.closedAt.toDate();
+          const closedDate = task.closedAt?.toDate() || new Date();
           if (closedFilter === 'today' && !isToday(closedDate)) return false;
           if (closedFilter === 'yesterday' && !isYesterday(closedDate)) return false;
           if (closedFilter === 'thisWeek' && !isThisWeek(closedDate)) return false;
@@ -91,7 +91,7 @@ export function Tasks() {
           if (dueDateFilter !== 'noDueDate' && !task.dueDate) return false;
           
           if (task.dueDate) {
-            const dueDate = task.dueDate.toDate();
+            const dueDate = task.dueDate?.toDate() || new Date();
             if (dueDateFilter === 'overdue' && (!isPast(dueDate) || isToday(dueDate))) return false;
             if (dueDateFilter === 'today' && !isToday(dueDate)) return false;
             if (dueDateFilter === 'tomorrow' && !isTomorrow(dueDate)) return false;
@@ -111,7 +111,7 @@ export function Tasks() {
     setSelectedTask(task);
     setEditTaskTitle(task.title);
     setEditTaskDesc(task.description || '');
-    setEditTaskDueDate(task.dueDate ? format(task.dueDate.toDate(), 'yyyy-MM-dd') : '');
+    setEditTaskDueDate(task.dueDate ? format(task.dueDate?.toDate() || new Date(), 'yyyy-MM-dd') : '');
     setIsEditingTask(false);
     setIsTaskModalOpen(true);
   };
@@ -350,8 +350,8 @@ export function Tasks() {
               </Card>
             ) : (
               filteredOpenTasks.map(task => {
-                const isDueToday = task.dueDate && isToday(task.dueDate.toDate());
-                const isOverdue = task.dueDate && isPast(task.dueDate.toDate()) && !isDueToday;
+                const isDueToday = task.dueDate && isToday(task.dueDate?.toDate() || new Date());
+                const isOverdue = task.dueDate && isPast(task.dueDate?.toDate() || new Date()) && !isDueToday;
                 
                 return (
                   <Card key={task.id} className={`cursor-pointer transition-colors hover:shadow-md ${isOverdue ? 'border-red-200 dark:border-red-900 bg-red-50/30 dark:bg-red-950/30' : isDueToday ? 'border-amber-200 dark:border-amber-900 bg-amber-50/30 dark:bg-amber-950/30' : ''}`} onClick={() => openTaskModal(task)}>
@@ -362,7 +362,7 @@ export function Tasks() {
                         <div className="flex flex-wrap gap-2 mt-2">
                           {task.dueDate && (
                             <Badge variant={isOverdue ? 'destructive' : isDueToday ? 'default' : 'secondary'} className={isDueToday ? 'bg-amber-500 hover:bg-amber-600' : ''}>
-                              Due: {format(task.dueDate.toDate(), 'MMM d, yyyy')}
+                              Due: {format(task.dueDate?.toDate() || new Date(), 'MMM d, yyyy')}
                             </Badge>
                           )}
                           {task.sourceType === 'actionItem' && (
@@ -391,7 +391,7 @@ export function Tasks() {
                               setSelectedTask(task);
                               setEditTaskTitle(task.title);
                               setEditTaskDesc(task.description || '');
-                              setEditTaskDueDate(task.dueDate ? format(task.dueDate.toDate(), 'yyyy-MM-dd') : '');
+                              setEditTaskDueDate(task.dueDate ? format(task.dueDate?.toDate() || new Date(), 'yyyy-MM-dd') : '');
                               setIsEditingTask(true);
                               setIsTaskModalOpen(true);
                             }}>
@@ -434,7 +434,7 @@ export function Tasks() {
                         )}
                       </div>
                       <div className="text-sm text-gray-500 dark:text-gray-400 text-right">
-                        <div>Closed: {task.closedAt ? format(task.closedAt.toDate(), 'MMM d, yyyy') : 'Unknown'}</div>
+                        <div>Closed: {task.closedAt ? format(task.closedAt?.toDate() || new Date(), 'MMM d, yyyy') : 'Unknown'}</div>
                       </div>
                       <div className="ml-4 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30" onClick={() => handleDeleteTask(task.id)}>
@@ -483,17 +483,17 @@ export function Tasks() {
                       </Badge>
                       {selectedTask.dueDate && (
                         <Badge variant="outline">
-                          Due: {format(selectedTask.dueDate.toDate(), 'MMM d, yyyy')}
+                          Due: {format(selectedTask.dueDate?.toDate() || new Date(), 'MMM d, yyyy')}
                         </Badge>
                       )}
                       {selectedTask.createdAt && (
                         <Badge variant="outline" className="bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
-                          Created: {format(selectedTask.createdAt.toDate(), 'MMM d, yyyy')}
+                          Created: {format(selectedTask.createdAt?.toDate() || new Date(), 'MMM d, yyyy')}
                         </Badge>
                       )}
                       {selectedTask.status === 'closed' && selectedTask.closedAt && (
                         <Badge variant="outline" className="bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800">
-                          Finished: {format(selectedTask.closedAt.toDate(), 'MMM d, yyyy')}
+                          Finished: {format(selectedTask.closedAt?.toDate() || new Date(), 'MMM d, yyyy')}
                         </Badge>
                       )}
                     </div>

@@ -8,8 +8,12 @@ export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
 export const googleProvider = new GoogleAuthProvider();
-// Request Google Calendar readonly scope
+// Request Google Calendar and Drive scopes
 googleProvider.addScope('https://www.googleapis.com/auth/calendar.readonly');
+googleProvider.addScope('https://www.googleapis.com/auth/drive.readonly');
+googleProvider.addScope('https://www.googleapis.com/auth/drive.file');
+googleProvider.addScope('https://www.googleapis.com/auth/documents');
 googleProvider.setCustomParameters({
-  prompt: 'select_account'
+  prompt: 'select_account consent',
+  access_type: 'offline'
 });
