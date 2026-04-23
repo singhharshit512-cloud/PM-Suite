@@ -35,10 +35,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       if (currentUser) {
         // Check if user has refresh token in Firestore
-        const userRef = doc(db, 'users', currentUser.uid);
-        const userSnap = await getDoc(userRef);
-        if (userSnap.exists() && userSnap.data().calendarRefreshToken) {
-          setHasCalendarAccess(true);
+        try {
+          const { getCachedOrFetch } = await import('../utils/cache.ts');
+          const userData = await getCachedOrFetch(`client:${currentUser.uid}:userDoc`, 300, async () => {
+             const userSnap = await getDoc(doc(db, 'users', currentUser.uid));
+             return userSnap.exists() ? userSnap.data() : null;
+          });
+          if (userData && userData.calendarRefreshToken) {
+            setHasCalendarAccess(true);
+          }
+        } catch (e) {
+          console.warn("Failed to fetch user doc for calendar access:", e);
         }
       } else {
         setHasCalendarAccess(false);
@@ -151,9 +158,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       // Persist user in Firestore
       const userRef = doc(db, 'users', user.uid);
-      const userSnap = await getDoc(userRef);
+      const { getCachedOrFetch, invalidateCache } = await import('../utils/cache.ts');
+      const userData = await getCachedOrFetch(`client:${user.uid}:userDoc`, 300, async () => {
+         const userSnap = await getDoc(userRef);
+         return userSnap.exists() ? userSnap.data() : null;
+      });
       
-      if (!userSnap.exists()) {
+      if (!userData) {
         await setDoc(userRef, {
           uid: user.uid,
           email: user.email,
@@ -161,6 +172,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           photoURL: user.photoURL,
           createdAt: serverTimestamp()
         });
+        await invalidateCache(`client:${user.uid}:userDoc`);
       }
       
       // Set to true because they just granted via popup

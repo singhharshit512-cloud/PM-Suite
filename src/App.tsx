@@ -25,6 +25,7 @@ import { AdminIntegrations } from './pages/admin/AdminIntegrations';
 import { AdminUsage } from './pages/admin/AdminUsage';
 import { AdminLogs } from './pages/admin/Logs';
 import { AdminAudit } from './pages/admin/AdminAudit';
+import { AdminFeedback } from './pages/admin/AdminFeedback';
 
 export default function App() {
   return (
@@ -46,6 +47,7 @@ export default function App() {
               <Route path="/admin/usage" element={<AdminUsage />} />
               <Route path="/admin/logs" element={<AdminLogs />} />
               <Route path="/admin/audit" element={<AdminAudit />} />
+              <Route path="/admin/feedback" element={<AdminFeedback />} />
             </Route>
 
             {/* App Routes */}

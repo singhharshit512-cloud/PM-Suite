@@ -7,6 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from './ui/dialog';
 import { Chatbot } from './Chatbot';
+import { FeedbackButton } from './FeedbackButton';
 
 export function Layout() {
   const { user, logout } = useAuth();
@@ -115,6 +116,9 @@ export function Layout() {
             <Button variant="ghost" size="icon" onClick={() => setIsLogoutModalOpen(true)} title="Sign out">
               <LogOut className="h-4 w-4 text-gray-500" />
             </Button>
+          </div>
+          <div className="mt-4">
+             <FeedbackButton className="w-full justify-start text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400" variant="ghost" size="sm" />
           </div>
         </div>
         

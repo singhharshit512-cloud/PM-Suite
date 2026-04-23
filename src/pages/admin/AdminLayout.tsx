@@ -1,7 +1,8 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useAdminAuth } from '../../contexts/AdminAuthContext';
 import { Button } from '../../components/ui/button';
-import { LayoutDashboard, Users, Bot, Key, Activity, ShieldAlert, FileText, LogOut } from 'lucide-react';
+import { LayoutDashboard, Users, Bot, Key, Activity, ShieldAlert, FileText, LogOut, MessageSquareHeart } from 'lucide-react';
+import { FeedbackButton } from '../../components/FeedbackButton';
 
 export function AdminLayout() {
   const { admin, logout } = useAdminAuth();
@@ -19,6 +20,7 @@ export function AdminLayout() {
     { name: 'Usage', path: '/admin/usage', icon: Activity },
     { name: 'Logs', path: '/admin/logs', icon: FileText },
     { name: 'Audit Log', path: '/admin/audit', icon: ShieldAlert },
+    { name: 'User Feedback', path: '/admin/feedback', icon: MessageSquareHeart }
   ];
 
   return (
@@ -46,6 +48,7 @@ export function AdminLayout() {
           })}
         </nav>
         <div className="p-4 border-t border-gray-200">
+           <FeedbackButton className="w-full mb-2 justify-start text-gray-600 hover:text-blue-600" variant="ghost" size="sm" adminEmail={(admin as any)?.email} />
            <Button variant="ghost" className="w-full justify-start text-gray-600 hover:text-red-600" onClick={logout}>
                <LogOut className="h-4 w-4 mr-2" /> Logout
            </Button>

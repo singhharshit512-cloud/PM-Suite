@@ -7,6 +7,7 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import { getCachedOrFetch, invalidateCache } from './src/utils/cache.ts';
 
 dotenv.config({ override: true });
 
@@ -43,7 +44,38 @@ export const db = databaseId ? getFirestore(getApp(), databaseId) : getFirestore
 
 // Helpers
 const JWT_SECRET = process.env.ADMIN_JWT_SECRET || 'super_secret_jwt_key_must_be_changed_in_prod';
+import nodemailer from 'nodemailer';
+
 const getWhitelist = () => (process.env.ADMIN_WHITELIST || '').split(',').map(e => e.trim().toLowerCase());
+
+export const sendFeedbackEmail = async (module: string, description: string, userEmail: string) => {
+  try {
+     const transporter = nodemailer.createTransport({
+       service: 'gmail',
+       auth: {
+         user: process.env.SMTP_EMAIL,
+         pass: process.env.SMTP_PASSWORD
+       }
+     });
+
+     await transporter.sendMail({
+       from: process.env.SMTP_EMAIL,
+       to: 'singhharshit6174@gmail.com',
+       subject: `New Feedback Received - ${module}`,
+       html: `
+         <h3>New Feedback Submitted</h3>
+         <p><strong>From:</strong> ${userEmail}</p>
+         <p><strong>Module:</strong> ${module}</p>
+         <p><strong>Description:</strong></p>
+         <blockquote style="border-left: 4px solid #ccc; padding-left: 10px;">${description}</blockquote>
+       `
+     });
+     console.log('Feedback notification email sent!');
+  } catch (error) {
+     console.error('Failed to send feedback email notification:', error);
+  }
+};
+
 
 // Utility to generate dynamic OAuth client based on request host
 const getDynamicOauthClient = (req: express.Request) => {
@@ -243,15 +275,26 @@ adminRouter.post('/auth/logout', (req, res) => {
 // Admin config routes
 adminRouter.get('/config/cowork', requireAdmin, async (req, res) => {
   try {
-    const promptDoc = await db.collection('adminConfig').doc('coworkSystemPrompt').get();
-    const templatesDoc = await db.collection('adminConfig').doc('docTemplates').get();
-    const modelsDoc = await db.collection('adminConfig').doc('modelSettings').get();
+    const promptDocData = await getCachedOrFetch('admin:coworkSystemPrompt', 300, async () => {
+      const doc = await db.collection('adminConfig').doc('coworkSystemPrompt').get();
+      return doc.exists ? doc.data() : null;
+    });
+
+    const templatesDocData = await getCachedOrFetch('admin:docTemplates', 300, async () => {
+      const doc = await db.collection('adminConfig').doc('docTemplates').get();
+      return doc.exists ? doc.data() : null;
+    });
+
+    const modelsDocData = await getCachedOrFetch('admin:modelSettings', 300, async () => {
+      const doc = await db.collection('adminConfig').doc('modelSettings').get();
+      return doc.exists ? doc.data() : null;
+    });
 
     res.json({
-      prompt: promptDoc.exists ? promptDoc.data()?.current : '',
-      promptVersions: promptDoc.exists ? promptDoc.data()?.versions || [] : [],
-      templates: templatesDoc.exists ? templatesDoc.data()?.templates || [] : [],
-      modelSettings: modelsDoc.exists ? modelsDoc.data() : { temperature: 0.7, maxTokens: 4000, topP: 0.95, topK: 64, dailyQuotaPerUser: 50 }
+      prompt: promptDocData?.current || '',
+      promptVersions: promptDocData?.versions || [],
+      templates: templatesDocData?.templates || [],
+      modelSettings: modelsDocData || { temperature: 0.7, maxTokens: 4000, topP: 0.95, topK: 64, dailyQuotaPerUser: 50 }
     });
   } catch (e) {
     res.status(500).json({ error: 'Failed to fetch config' });
@@ -281,6 +324,8 @@ adminRouter.put('/config/cowork/prompt', requireAdmin, async (req, res) => {
       current: prompt,
       versions
     }, { merge: true });
+
+    await invalidateCache('admin:coworkSystemPrompt');
 
     await logAdminAction(adminId, 'update_cowork_prompt', 'adminConfig/coworkSystemPrompt', req.ip || '');
     res.json({ success: true });
@@ -318,6 +363,7 @@ adminRouter.put('/config/cowork/templates', requireAdmin, async (req, res) => {
   const adminId = (req as any).admin.adminId;
   try {
     await db.collection('adminConfig').doc('docTemplates').set({ templates });
+    await invalidateCache('admin:docTemplates');
     await logAdminAction(adminId, 'update_cowork_templates', 'adminConfig/docTemplates', req.ip || '');
     res.json({ success: true });
   } catch (e) {
@@ -332,6 +378,7 @@ adminRouter.put('/config/model', requireAdmin, async (req, res) => {
     await db.collection('adminConfig').doc('modelSettings').set({
       temperature, maxTokens, topP, topK, dailyQuotaPerUser
     });
+    await invalidateCache('admin:modelSettings');
     await logAdminAction(adminId, 'update_model_settings', 'adminConfig/modelSettings', req.ip || '');
     res.json({ success: true });
   } catch (e) {
@@ -345,11 +392,14 @@ adminRouter.get('/users', requireAdmin, async (req, res) => {
     const listUsersResult = await getAuth().listUsers();
     
     // Get roles
-    const rolesSnapshot = await db.collection('userRoles').get();
-    const rolesMap: Record<string, string> = {};
-    rolesSnapshot.forEach(doc => {
-      rolesMap[doc.id] = doc.data().role;
+    const rolesData = await getCachedOrFetch('admin:userRoles', 60, async () => {
+      const snap = await db.collection('userRoles').get();
+      const map: Record<string, string> = {};
+      snap.forEach(doc => { map[doc.id] = doc.data().role; });
+      return map;
     });
+
+    const rolesMap: Record<string, string> = rolesData || {};
 
     const users = listUsersResult.users.map(user => ({
       uid: user.uid,
@@ -380,6 +430,7 @@ adminRouter.patch('/users/:uid', requireAdmin, async (req, res) => {
     
     if (role !== undefined) {
       await db.collection('userRoles').doc(uid).set({ role });
+      await invalidateCache('admin:userRoles');
       await logAdminAction(adminId, 'change_user_role', uid, req.ip || '', { newRole: role });
     }
     res.json({ success: true });
@@ -427,8 +478,11 @@ adminRouter.get('/stats', requireAdmin, async (req, res) => {
 
 adminRouter.get('/system/status', requireAdmin, async (req, res) => {
   try {
-    const modelsDoc = await db.collection('adminConfig').doc('modelSettings').get();
-    const defaultModel = modelsDoc.exists ? modelsDoc.data()?.defaultModel : 'gemini-2.5-flash';
+    const modelsDocData = await getCachedOrFetch('admin:modelSettings', 300, async () => {
+      const doc = await db.collection('adminConfig').doc('modelSettings').get();
+      return doc.exists ? doc.data() : null;
+    });
+    const defaultModel = modelsDocData?.defaultModel || 'gemini-2.5-flash';
 
     res.json({
       google: {
@@ -457,17 +511,30 @@ adminRouter.get('/system/status', requireAdmin, async (req, res) => {
 
 adminRouter.get('/system/usage', requireAdmin, async (req, res) => {
   try {
-    const usersSnap = await db.collection('userRoles').get();
-    const activeUsers = usersSnap.size;
-
-    const quotesSnap = await db.collection('userQuotas').get();
-    let totalMessages = 0;
-    quotesSnap.forEach(doc => {
-       totalMessages += doc.data().count || 0;
+    const activeUsers = await getCachedOrFetch('admin:usage:userCount', 300, async () => {
+      const usersSnap = await db.collection('userRoles').get();
+      return usersSnap.size;
     });
 
-    const meetingsSnap = await db.collection('meetings').get();
-    const totalMeetings = meetingsSnap.size;
+    const totalMessages = await getCachedOrFetch('admin:usage:totalMessages', 300, async () => {
+      const quotesSnap = await db.collection('userQuotas').get();
+      let count = 0;
+      quotesSnap.forEach(doc => { count += doc.data().count || 0; });
+      return count;
+    });
+
+    const meetingsData = await getCachedOrFetch('admin:usage:meetings', 300, async () => {
+      const meetingsSnap = await db.collection('meetings').get();
+      const meetings: any[] = [];
+      meetingsSnap.forEach(doc => {
+        const data = doc.data();
+        if (data.date) {
+            meetings.push({ date: data.date.toDate ? data.date.toDate().toISOString() : new Date(data.date).toISOString() });
+        }
+      });
+      return { size: meetingsSnap.size, meetings };
+    });
+    const totalMeetings = meetingsData.size;
 
     // Generate last 7 days
     const tokenData = [];
@@ -482,17 +549,14 @@ adminRouter.get('/system/usage', requireAdmin, async (req, res) => {
     }
 
     // Aggregate meetings
-    meetingsSnap.forEach(doc => {
-      const data = doc.data();
-      if (data.date) {
-        const mDate = data.date.toDate ? data.date.toDate() : new Date(data.date);
-        const mDateStr = mDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        
-        const dayIdx = meetingData.findIndex(md => md.date === mDateStr);
-        if (dayIdx !== -1) {
-          // Approximate 30 mins per meeting if duration isn't explicitly set
-          meetingData[dayIdx].duration += 30; 
-        }
+    meetingsData.meetings.forEach((m: any) => {
+      const mDate = new Date(m.date);
+      const mDateStr = mDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      
+      const dayIdx = meetingData.findIndex(md => md.date === mDateStr);
+      if (dayIdx !== -1) {
+        // Approximate 30 mins per meeting if duration isn't explicitly set
+        meetingData[dayIdx].duration += 30; 
       }
     });
 
@@ -728,6 +792,20 @@ adminRouter.get('/logs/:traceId', requireAdmin, async (req, res) => {
   }
 });
 
+adminRouter.get('/test-db', async (req, res) => {
+  try {
+    const userId = "test"; 
+    const snapshot = await db.collection('tasks')
+      .where('userId', '==', userId)
+      .where('status', '==', 'open')
+      .orderBy('createdAt', 'desc')
+      .get();
+    res.json({ success: true, count: snapshot.size });
+  } catch (e: any) {
+    res.json({ error: e.message, code: e.code });
+  }
+});
+
 adminRouter.get('/health', requireAdmin, async (req, res) => {
    // Simulated health check for Gemini, Recall, Google, Firestore
    res.json({
@@ -736,4 +814,42 @@ adminRouter.get('/health', requireAdmin, async (req, res) => {
       google: { status: 'healthy', lastSuccess: new Date().toISOString(), errorRate1h: 0.5, avgLatency: 450 },
       firestore: { status: 'healthy', lastSuccess: new Date().toISOString(), errorRate1h: 0.0, avgLatency: 50 },
    });
+});
+
+adminRouter.get('/feedback', requireAdmin, async (req, res) => {
+  try {
+     const snapshot = await db.collection('feedback').orderBy('timestamp', 'desc').limit(200).get();
+     const items = snapshot.docs.map(doc => {
+       const data = doc.data();
+       return {
+         id: doc.id,
+         ...data,
+         timestamp: data.timestamp?.toDate ? data.timestamp.toDate().toISOString() : data.timestamp
+       };
+     });
+     res.json({ feedback: items });
+  } catch(e: any) {
+     res.status(500).json({ error: e.message });
+  }
+});
+
+adminRouter.get('/feedback/export', requireAdmin, async (req, res) => {
+  try {
+     res.setHeader('Content-Type', 'text/csv');
+     res.setHeader('Content-Disposition', 'attachment; filename="feedback-export.csv"');
+     res.write('Date,Email,Module,Description\n');
+     
+     const snapshot = await db.collection('feedback').orderBy('timestamp', 'desc').get();
+     snapshot.forEach(doc => {
+        const data = doc.data();
+        const dateStr = data.timestamp?.toDate ? data.timestamp.toDate().toISOString() : (data.timestamp || '');
+        const email = (data.userEmail || '').replace(/"/g, '""');
+        const module = (data.module || '').replace(/"/g, '""');
+        const desc = (data.description || '').replace(/"/g, '""');
+        res.write(`"${dateStr}","${email}","${module}","${desc}"\n`);
+     });
+     res.end();
+  } catch(e: any) {
+     if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
 });

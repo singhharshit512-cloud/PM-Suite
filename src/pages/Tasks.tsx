@@ -132,32 +132,72 @@ export function Tasks() {
     }
   };
 
+  const [syncFlag, setSyncFlag] = useState(0);
+
   useEffect(() => {
     if (!user) return;
+    let isMounted = true;
 
-    const qOpen = query(collection(db, 'tasks'), where('userId', '==', user.uid), where('status', '==', 'open'), orderBy('createdAt', 'desc'));
-    const unsubOpen = onSnapshot(qOpen, (snapshot) => {
-      const tasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Task));
-      // Sort client-side by due date if exists
-      tasks.sort((a, b) => {
-        if (a.dueDate && b.dueDate) return a.dueDate.toMillis() - b.dueDate.toMillis();
-        if (a.dueDate) return -1;
-        if (b.dueDate) return 1;
-        return 0;
-      });
-      setOpenTasks(tasks);
-    });
+    const fetchTasksData = async () => {
+      try {
+        const { getCachedOrFetch } = await import('../utils/cache.ts');
+        const { getDocs } = await import('firebase/firestore');
 
-    const qClosed = query(collection(db, 'tasks'), where('userId', '==', user.uid), where('status', '==', 'closed'), orderBy('closedAt', 'desc'));
-    const unsubClosed = onSnapshot(qClosed, (snapshot) => {
-      setClosedTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Task)));
-    });
+        const openTasksData = await getCachedOrFetch(`client:${user.uid}:tasks:open`, 259200, async () => {
+          const qOpen = query(collection(db, 'tasks'), where('userId', '==', user.uid), where('status', '==', 'open'));
+          const snap = await getDocs(qOpen);
+          return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        });
+
+        if (isMounted) {
+          const tasks = openTasksData.map((t: any) => t as Task);
+          tasks.sort((a, b) => {
+            let aMillis = null;
+            let bMillis = null;
+            if (a.dueDate) aMillis = (a.dueDate as any).toMillis ? (a.dueDate as any).toMillis() : ((a.dueDate as any).seconds ? (a.dueDate as any).seconds * 1000 : new Date(a.dueDate as any).getTime());
+            if (b.dueDate) bMillis = (b.dueDate as any).toMillis ? (b.dueDate as any).toMillis() : ((b.dueDate as any).seconds ? (b.dueDate as any).seconds * 1000 : new Date(b.dueDate as any).getTime());
+            
+            if (aMillis && bMillis) return aMillis - bMillis;
+            if (aMillis) return -1;
+            if (bMillis) return 1;
+            return 0;
+          });
+          setOpenTasks(tasks);
+        }
+
+        const closedTasksData = await getCachedOrFetch(`client:${user.uid}:tasks:closed`, 259200, async () => {
+          const qClosed = query(collection(db, 'tasks'), where('userId', '==', user.uid), where('status', '==', 'closed'));
+          const snap = await getDocs(qClosed);
+          return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        });
+
+        if (isMounted) {
+          const tasks = closedTasksData.map((t: any) => t as Task);
+          tasks.sort((a, b) => {
+            let aMillis = 0;
+            let bMillis = 0;
+            if (a.closedAt) aMillis = (a.closedAt as any).toMillis ? (a.closedAt as any).toMillis() : ((a.closedAt as any).seconds ? (a.closedAt as any).seconds * 1000 : new Date(a.closedAt as any).getTime());
+            if (b.closedAt) bMillis = (b.closedAt as any).toMillis ? (b.closedAt as any).toMillis() : ((b.closedAt as any).seconds ? (b.closedAt as any).seconds * 1000 : new Date(b.closedAt as any).getTime());
+            return bMillis - aMillis;
+          });
+          setClosedTasks(tasks);
+        }
+      } catch (error: any) {
+        console.error(error);
+        if (error.code === 'resource-exhausted') {
+          toast.error('Firebase Daily Database Quota Exceeded. Upgrade to Blaze plan or wait until tomorrow.');
+        } else if (error.code === 'failed-precondition') {
+          toast.error('Database index missing. Please create the required Firestore composite index.');
+        }
+      }
+    };
+
+    fetchTasksData();
 
     return () => {
-      unsubOpen();
-      unsubClosed();
+      isMounted = false;
     };
-  }, [user]);
+  }, [user, syncFlag]);
 
   const handleAddTask = async () => {
     if (!user || !newTaskTitle.trim()) return;
@@ -181,6 +221,11 @@ export function Tasks() {
       setNewTaskDesc('');
       setNewTaskDueDate('');
       toast.success('Task added successfully');
+      
+      const { invalidateCache } = await import('../utils/cache.ts');
+      await invalidateCache(`client:${user.uid}:tasks:open`);
+      await invalidateCache(`client:${user.uid}:dashboard:openTasks`);
+      setSyncFlag(f => f + 1);
     } catch (error) {
       console.error(error);
       toast.error('Failed to add task');
@@ -199,6 +244,13 @@ export function Tasks() {
       setFinishingTask(null);
       setFinishComment('');
       toast.success('Task completed');
+
+      const { invalidateCache } = await import('../utils/cache.ts');
+      await invalidateCache(`client:${user.uid}:tasks:open`);
+      await invalidateCache(`client:${user.uid}:tasks:closed`);
+      await invalidateCache(`client:${user.uid}:dashboard:openTasks`);
+      await invalidateCache(`client:${user.uid}:dashboard:closedTasks`);
+      setSyncFlag(f => f + 1);
     } catch (error) {
       console.error(error);
       toast.error('Failed to complete task');
@@ -209,6 +261,14 @@ export function Tasks() {
     try {
       await deleteDoc(doc(db, 'tasks', taskId));
       toast.success('Task deleted');
+      
+      const { invalidateCache } = await import('../utils/cache.ts');
+      await invalidateCache(`client:${user?.uid}:tasks:open`);
+      await invalidateCache(`client:${user?.uid}:tasks:closed`);
+      await invalidateCache(`client:${user?.uid}:dashboard:openTasks`);
+      await invalidateCache(`client:${user?.uid}:dashboard:closedTasks`);
+      setSyncFlag(f => f + 1);
+
       if (selectedTask?.id === taskId) {
         setIsTaskModalOpen(false);
       }

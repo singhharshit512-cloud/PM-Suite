@@ -4,8 +4,12 @@ import { db } from '../firebase';
 export async function fetchRecentDocs(userId: string) {
   try {
     const accessToken = localStorage.getItem('googleAccessToken');
-    const userDoc = await getDoc(doc(db, 'users', userId));
-    const refreshToken = userDoc.data()?.calendarRefreshToken;
+    const { getCachedOrFetch } = await import('../utils/cache.ts');
+    const userData = await getCachedOrFetch(`client:${userId}:userDoc`, 300, async () => {
+       const userDoc = await getDoc(doc(db, 'users', userId));
+       return userDoc.exists() ? userDoc.data() : null;
+    });
+    const refreshToken = userData?.calendarRefreshToken;
 
     if (!accessToken && !refreshToken) {
       throw new Error('UNAUTHORIZED');

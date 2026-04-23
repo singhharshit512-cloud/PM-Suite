@@ -98,8 +98,12 @@ export function Cowork() {
       let refreshToken = null;
       if (user) {
         try {
-          const userDoc = await getDoc(doc(db, 'users', user.uid));
-          refreshToken = userDoc.data()?.calendarRefreshToken;
+          const { getCachedOrFetch } = await import('../utils/cache.ts');
+          const userData = await getCachedOrFetch(`client:${user.uid}:userDoc`, 300, async () => {
+             const userDoc = await getDoc(doc(db, 'users', user.uid));
+             return userDoc.exists() ? userDoc.data() : null;
+          });
+          refreshToken = userData?.calendarRefreshToken;
         } catch(e) {}
       }
 

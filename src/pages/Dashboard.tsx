@@ -40,34 +40,75 @@ export function Dashboard() {
 
   useEffect(() => {
     if (!user) return;
+    
+    let isMounted = true;
 
-    // Fetch Open Tasks
-    const qOpenTasks = query(collection(db, 'tasks'), where('userId', '==', user.uid), where('status', '==', 'open'));
-    const unsubOpenTasks = onSnapshot(qOpenTasks, (snapshot) => {
-      setOpenTasksCount(snapshot.size);
-      
-      const dueToday: Task[] = [];
-      snapshot.forEach((doc) => {
-        const task = { id: doc.id, ...doc.data() } as Task;
-        if (task.dueDate && isToday(task.dueDate?.toDate() || new Date())) {
-          dueToday.push(task);
+    const fetchDashboardData = async () => {
+      try {
+        const { getCachedOrFetch } = await import('../utils/cache.ts');
+        const { getDocs } = await import('firebase/firestore');
+
+        // Fetch Open Tasks
+        const openTasks = await getCachedOrFetch(`client:${user.uid}:dashboard:openTasks`, 259200, async () => {
+          const qOpenTasks = query(collection(db, 'tasks'), where('userId', '==', user.uid), where('status', '==', 'open'));
+          const snap = await getDocs(qOpenTasks);
+          return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        });
+
+        if (isMounted) {
+          setOpenTasksCount(openTasks.length);
+          const dueToday: Task[] = [];
+          openTasks.forEach((data: any) => {
+            const task = data as Task;
+            let dateObj: Date | null = null;
+            if (task.dueDate) {
+               if ((task.dueDate as any).toDate) dateObj = (task.dueDate as any).toDate();
+               else if ((task.dueDate as any).seconds) dateObj = new Date((task.dueDate as any).seconds * 1000);
+               else dateObj = new Date(task.dueDate as any);
+            }
+            if (dateObj && isToday(dateObj)) {
+              dueToday.push(task);
+            }
+          });
+          setTasksDueTodayCount(dueToday.length);
+          setTasksDueToday(dueToday);
         }
-      });
-      setTasksDueTodayCount(dueToday.length);
-      setTasksDueToday(dueToday);
-    });
 
-    // Fetch Closed Today Tasks
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const qClosedTasks = query(collection(db, 'tasks'), where('userId', '==', user.uid), where('status', '==', 'closed'), where('closedAt', '>=', Timestamp.fromDate(startOfToday)));
-    const unsubClosedTasks = onSnapshot(qClosedTasks, (snapshot) => {
-      setClosedTodayCount(snapshot.size);
-    });
+        // Fetch Closed Tasks
+        const closedTasks = await getCachedOrFetch(`client:${user.uid}:dashboard:closedTasks`, 259200, async () => {
+          const qClosedTasks = query(collection(db, 'tasks'), where('userId', '==', user.uid), where('status', '==', 'closed'));
+          const snap = await getDocs(qClosedTasks);
+          return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        });
+
+        if (isMounted) {
+          const startOfToday = new Date();
+          startOfToday.setHours(0, 0, 0, 0);
+          let count = 0;
+          closedTasks.forEach((data: any) => {
+            let millis = 0;
+            if (data.closedAt) {
+               if (data.closedAt.toMillis) millis = data.closedAt.toMillis();
+               else if (data.closedAt.seconds) millis = data.closedAt.seconds * 1000;
+               else millis = new Date(data.closedAt).getTime();
+            }
+            if (millis >= startOfToday.getTime()) {
+              count++;
+            }
+          });
+          setClosedTodayCount(count);
+        }
+
+      } catch (error: any) {
+        console.error("Dashboard fetch error:", error);
+        if (error.code === 'resource-exhausted') toast.error("Database Quota Exceeded");
+      }
+    };
+
+    fetchDashboardData();
 
     return () => {
-      unsubOpenTasks();
-      unsubClosedTasks();
+      isMounted = false;
     };
   }, [user]);
 

@@ -7,6 +7,7 @@ import { MessageCircle, X, Send, Mic, Image as ImageIcon, Plus, Loader2, SquareS
 import ReactMarkdown from 'react-markdown';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
+import { getCachedOrFetch, invalidateCache } from '../utils/cache';
 
 const getBaseUrl = () => typeof window !== 'undefined' ? `${window.location.origin}/api/gemini-proxy` : 'http://localhost:3000/api/gemini-proxy';
 
@@ -105,18 +106,38 @@ export function Chatbot() {
     }
   }, [messages, streamingText]);
 
+  const [syncFlag, setSyncFlag] = useState(0);
+
   // Load latest chat on mount
   useEffect(() => {
     if (!user) return;
+    let isMounted = true;
     const fetchLatestChat = async () => {
-      const q = query(collection(db, 'chats'), where('userId', '==', user.uid), orderBy('updatedAt', 'desc'));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        setChatId(snap.docs[0].id);
+      try {
+        const { getCachedOrFetch } = await import('../utils/cache.ts');
+        const chatsData = await getCachedOrFetch(`client:${user.uid}:chatbot:chats`, 259200, async () => {
+          const q = query(collection(db, 'chats'), where('userId', '==', user.uid));
+          const snap = await getDocs(q);
+          return snap.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+        });
+
+        if (isMounted && chatsData.length > 0) {
+          chatsData.sort((a, b) => {
+            let aMillis = 0;
+            let bMillis = 0;
+            if (a.updatedAt) aMillis = a.updatedAt.toMillis ? a.updatedAt.toMillis() : (a.updatedAt.seconds ? a.updatedAt.seconds * 1000 : new Date(a.updatedAt).getTime());
+            if (b.updatedAt) bMillis = b.updatedAt.toMillis ? b.updatedAt.toMillis() : (b.updatedAt.seconds ? b.updatedAt.seconds * 1000 : new Date(b.updatedAt).getTime());
+            return bMillis - aMillis;
+          });
+          setChatId(chatsData[0].id);
+        }
+      } catch (error) {
+        console.error("Error fetching chats:", error);
       }
     };
     fetchLatestChat();
-  }, [user]);
+    return () => { isMounted = false; };
+  }, [user, syncFlag]);
 
   // Listen to messages for current chat
   useEffect(() => {
@@ -124,13 +145,23 @@ export function Chatbot() {
       setMessages([]);
       return;
     }
-    const q = query(collection(db, `chats/${chatId}/messages`), orderBy('createdAt', 'asc'));
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const msgs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setMessages(msgs);
-    });
-    return () => unsubscribe();
-  }, [chatId]);
+    let isMounted = true;
+    const fetchMessages = async () => {
+      try {
+        const { getCachedOrFetch } = await import('../utils/cache.ts');
+        const msgs = await getCachedOrFetch(`client:${user?.uid}:chatbot:messages:${chatId}`, 259200, async () => {
+          const q = query(collection(db, `chats/${chatId}/messages`), orderBy('createdAt', 'asc'));
+          const snap = await getDocs(q);
+          return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        });
+        if (isMounted) setMessages(msgs);
+      } catch (error) {
+        console.error("Chatbot messages error:", error);
+      }
+    };
+    fetchMessages();
+    return () => { isMounted = false; };
+  }, [chatId, user, syncFlag]);
 
   const handleNewChat = () => {
     setChatId(null);
@@ -187,18 +218,41 @@ export function Chatbot() {
   };
 
   const fetchContext = async (userId: string) => {
-    const tasksSnap = await getDocs(query(collection(db, 'tasks'), where('userId', '==', userId)));
-    const tasks = tasksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const tasks = await getCachedOrFetch(`client:${userId}:tasks`, 60, async () => {
+      const snap = await getDocs(query(collection(db, 'tasks'), where('userId', '==', userId)));
+      return snap.docs.map(d => {
+        const data = d.data();
+        if (data.createdAt) data.createdAt = data.createdAt.toDate ? data.createdAt.toDate().toISOString() : data.createdAt;
+        if (data.dueDate) data.dueDate = data.dueDate.toDate ? data.dueDate.toDate().toISOString() : data.dueDate;
+        if (data.closedAt) data.closedAt = data.closedAt.toDate ? data.closedAt.toDate().toISOString() : data.closedAt;
+        return { id: d.id, ...data };
+      });
+    });
     
-    const meetingsSnap = await getDocs(query(collection(db, 'meetings'), where('userId', '==', userId)));
-    const meetings = meetingsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+    const meetings = await getCachedOrFetch(`client:${userId}:meetings`, 60, async () => {
+      const snap = await getDocs(query(collection(db, 'meetings'), where('userId', '==', userId)));
+      return snap.docs.map(d => {
+        const data = d.data();
+        if (data.createdAt) data.createdAt = data.createdAt.toDate ? data.createdAt.toDate().toISOString() : data.createdAt;
+        if (data.date) data.date = data.date.toDate ? data.date.toDate().toISOString() : data.date;
+        return { id: d.id, ...data };
+      });
+    });
 
-    const notesSnap = await getDocs(query(collection(db, 'notes'), where('userId', '==', userId)));
-    const notes = notesSnap.docs.map(d => {
-      const data = d.data();
-      const meeting = meetings.find(m => m.id === data.meetingId);
+    const rawNotes = await getCachedOrFetch(`client:${userId}:notes`, 60, async () => {
+      const snap = await getDocs(query(collection(db, 'notes'), where('userId', '==', userId)));
+      return snap.docs.map(d => {
+        const data = d.data();
+        if (data.createdAt) data.createdAt = data.createdAt.toDate ? data.createdAt.toDate().toISOString() : data.createdAt;
+        if (data.updatedAt) data.updatedAt = data.updatedAt.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt;
+        return { id: d.id, ...data };
+      });
+    });
+
+    const notes = rawNotes.map((data: any) => {
+      const meeting = meetings.find(m => m.id === data.meetingId) as any;
       return {
-        noteId: d.id,
+        noteId: data.id,
         meetingId: data.meetingId,
         title: meeting?.title || 'Untitled',
         content: data.content
@@ -322,12 +376,14 @@ export function Chatbot() {
                 status: 'open',
                 createdAt: serverTimestamp()
               });
+              await invalidateCache(`client:${user.uid}:tasks`);
               result = { success: true, taskId: docRef.id };
             } else if (name === 'updateTask') {
               await updateDoc(doc(db, 'tasks', args?.taskId as string), {
                 status: args?.status as string,
                 closedAt: args?.status === 'closed' ? serverTimestamp() : null
               });
+              await invalidateCache(`client:${user.uid}:tasks`);
               result = { success: true };
             } else if (name === 'createMeetingNote') {
               const meetingRef = await addDoc(collection(db, 'meetings'), {
@@ -350,18 +406,22 @@ export function Chatbot() {
                 createdAt: serverTimestamp(),
                 updatedAt: serverTimestamp()
               });
+              await invalidateCache(`client:${user.uid}:meetings`);
+              await invalidateCache(`client:${user.uid}:notes`);
               result = { success: true, meetingId: meetingRef.id, noteId: docRef.id };
             } else if (name === 'updateMeetingNote') {
               await updateDoc(doc(db, 'notes', args?.noteId as string), {
                 content: args?.content as string,
                 updatedAt: serverTimestamp()
               });
+              await invalidateCache(`client:${user.uid}:notes`);
               result = { success: true };
             } else if (name === 'deleteAllOpenTasks') {
               const q = query(collection(db, 'tasks'), where('userId', '==', user.uid), where('status', '==', 'open'));
               const snapshot = await getDocs(q);
               const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, 'tasks', d.id)));
               await Promise.all(deletePromises);
+              await invalidateCache(`client:${user.uid}:tasks`);
               result = { success: true, deletedCount: snapshot.size };
             } else if (name === 'deleteAllMeetingNotes') {
               const notesQ = query(collection(db, 'notes'), where('userId', '==', user.uid));
@@ -374,6 +434,9 @@ export function Chatbot() {
               const deleteMeetingsPromises = meetingsSnapshot.docs.map(d => deleteDoc(doc(db, 'meetings', d.id)));
               await Promise.all(deleteMeetingsPromises);
               
+              await invalidateCache(`client:${user.uid}:meetings`);
+              await invalidateCache(`client:${user.uid}:notes`);
+
               result = { success: true, deletedNotesCount: notesSnapshot.size, deletedMeetingsCount: meetingsSnapshot.size };
             }
           } catch (e: any) {

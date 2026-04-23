@@ -52,6 +52,7 @@ export function Notes() {
   const noteContentRef = useRef(noteContent);
   const currentNoteRef = useRef(currentNote);
   const selectedMeetingIdRef = useRef(selectedMeetingId);
+  const [syncFlag, setSyncFlag] = useState(0);
 
   useEffect(() => {
     noteContentRef.current = noteContent;
@@ -89,14 +90,37 @@ export function Notes() {
 
   useEffect(() => {
     if (!user) return;
+    let isMounted = true;
+    
+    const fetchMeetings = async () => {
+      try {
+        const { getCachedOrFetch } = await import('../utils/cache.ts');
+        const { getDocs } = await import('firebase/firestore');
+        
+        const meetingsData = await getCachedOrFetch(`client:${user.uid}:notes:meetings`, 259200, async () => {
+          const q = query(collection(db, 'meetings'), where('userId', '==', user.uid));
+          const snap = await getDocs(q);
+          return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        });
 
-    const q = query(collection(db, 'meetings'), where('userId', '==', user.uid), orderBy('date', 'desc'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      setMeetings(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Meeting)));
-    });
+        if (isMounted) {
+          const ms = meetingsData.map((d: any) => d as Meeting);
+          ms.sort((a, b) => {
+            if (a.date && b.date) return new Date(b.date).getTime() - new Date(a.date).getTime();
+            return 0;
+          });
+          setMeetings(ms);
+        }
+      } catch (error: any) {
+        console.error("Notes meetings query error:", error);
+        if (error.code === 'resource-exhausted') toast.error('Database Quota Exceeded');
+      }
+    };
+    
+    fetchMeetings();
 
-    return () => unsub();
-  }, [user]);
+    return () => { isMounted = false; };
+  }, [user, syncFlag]);
 
   useEffect(() => {
     if (user && hasCalendarAccess) {
@@ -119,26 +143,40 @@ export function Notes() {
       setNoteContent('');
       return;
     }
+    let isMounted = true;
 
-    const q = query(collection(db, 'notes'), where('meetingId', '==', selectedMeetingId), where('userId', '==', user.uid));
-    const unsub = onSnapshot(q, (snapshot) => {
-      if (!snapshot.empty) {
-        const noteDoc = snapshot.docs[0];
-        const noteData = { id: noteDoc.id, ...noteDoc.data() } as Note;
-        setCurrentNote(noteData);
-        // Only update content if we're not currently typing (to avoid cursor jumps)
-        // In a real app, we'd use a more robust sync mechanism. For now, we'll just set it initially.
-        if (!currentNote) {
-          setNoteContent(noteData.content);
+    const fetchNote = async () => {
+      try {
+        const { getCachedOrFetch } = await import('../utils/cache.ts');
+        const { getDocs } = await import('firebase/firestore');
+
+        const notesData = await getCachedOrFetch(`client:${user.uid}:notes:meeting:${selectedMeetingId}`, 259200, async () => {
+          const q = query(collection(db, 'notes'), where('meetingId', '==', selectedMeetingId), where('userId', '==', user.uid));
+          const snap = await getDocs(q);
+          return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        });
+
+        if (isMounted) {
+          if (notesData.length > 0) {
+            const noteData = notesData[0] as Note;
+            setCurrentNote(noteData);
+            if (!currentNote) {
+              setNoteContent(noteData.content || '');
+            }
+          } else {
+            setCurrentNote(null);
+            setNoteContent('');
+          }
         }
-      } else {
-        setCurrentNote(null);
-        setNoteContent('');
+      } catch (error: any) {
+        if (error.code === 'resource-exhausted') toast.error('Database Quota Exceeded');
       }
-    });
+    };
 
-    return () => unsub();
-  }, [selectedMeetingId, user]);
+    fetchNote();
+
+    return () => { isMounted = false; };
+  }, [selectedMeetingId, user, syncFlag]);
 
   const handleNoteChange = (newContent: string) => {
     setNoteContent(newContent);
@@ -169,6 +207,9 @@ export function Notes() {
       setNoteContent('');
       setIsDeleteDialogOpen(false);
       toast.success('Note deleted');
+      const { invalidateCache } = await import('../utils/cache.ts');
+      await invalidateCache(`client:${user.uid}:notes:meeting:${selectedMeetingId}`);
+      setSyncFlag(f => f + 1);
     } catch (error) {
       console.error(error);
       toast.error('Failed to delete note');
@@ -187,6 +228,10 @@ export function Notes() {
       setNoteContent('');
       setIsDeleteMeetingDialogOpen(false);
       toast.success('Meeting deleted');
+      const { invalidateCache } = await import('../utils/cache.ts');
+      await invalidateCache(`client:${user.uid}:notes:meetings`);
+      await invalidateCache(`client:${user.uid}:notes:meeting:${selectedMeetingId}`);
+      setSyncFlag(f => f + 1);
     } catch (error) {
       console.error(error);
       toast.error('Failed to delete meeting');
@@ -233,6 +278,9 @@ export function Notes() {
         await updateDoc(doc(db, 'meetings', meeting.id), {
           botId: data.botId
         });
+        const { invalidateCache } = await import('../utils/cache.ts');
+        await invalidateCache(`client:${user.uid}:notes:meetings`);
+        setSyncFlag(f => f + 1);
       }
 
       toast.success('AI Note Taker is joining the meeting!');
@@ -343,6 +391,9 @@ export function Notes() {
         });
       }
       setLastSaved(new Date());
+      const { invalidateCache } = await import('../utils/cache.ts');
+      await invalidateCache(`client:${user.uid}:notes:meeting:${selectedMeetingId}`);
+      setSyncFlag(f => f + 1);
     } catch (error) {
       console.error('Failed to save note', error);
       toast.error('Failed to save note');
@@ -371,6 +422,10 @@ export function Notes() {
       setNewMeetingTitle('');
       setSelectedMeetingId(docRef.id);
       toast.success('Meeting created');
+
+      const { invalidateCache } = await import('../utils/cache.ts');
+      await invalidateCache(`client:${user.uid}:notes:meetings`);
+      setSyncFlag(f => f + 1);
     } catch (error) {
       console.error(error);
       toast.error('Failed to create meeting');
@@ -487,6 +542,12 @@ export function Notes() {
         updatedAt: serverTimestamp()
       });
 
+      const { invalidateCache } = await import('../utils/cache.ts');
+      await invalidateCache(`client:${user.uid}:tasks:open`);
+      await invalidateCache(`client:${user.uid}:dashboard:openTasks`);
+      await invalidateCache(`client:${user.uid}:notes:meeting:${selectedMeetingId}`);
+      setSyncFlag(f => f + 1);
+
       toast.success('Task created', {
         action: {
           label: 'View Tasks',
@@ -507,6 +568,9 @@ export function Notes() {
         actionItems: updatedActionItems,
         updatedAt: serverTimestamp()
       });
+      const { invalidateCache } = await import('../utils/cache.ts');
+      await invalidateCache(`client:${user?.uid}:notes:meeting:${selectedMeetingId}`);
+      setSyncFlag(f => f + 1);
     } catch (error) {
       console.error(error);
       toast.error('Failed to delete action item');

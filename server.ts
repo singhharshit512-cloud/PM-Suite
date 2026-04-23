@@ -6,8 +6,9 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
-import { adminRouter, db } from './adminBackend.ts';
+import { adminRouter, db, sendFeedbackEmail } from './adminBackend.ts';
 import { logRequest, logError } from './backendLogger.ts';
+import { FieldValue } from 'firebase-admin/firestore';
 
 dotenv.config({ override: true });
 
@@ -42,6 +43,43 @@ app.use(cookieParser());
 app.use(logRequest);
 
 app.use('/api/admin', adminRouter);
+
+// Public Feedback Route
+app.post('/api/feedback', async (req, res) => {
+  try {
+     const { module, description, imageBase64, email } = req.body;
+     
+     let emailSent = false;
+     if (process.env.SMTP_EMAIL && process.env.SMTP_PASSWORD) {
+        // Await the email explicitly so serverless environments do not pause the CPU mid-send
+        try {
+           await sendFeedbackEmail(module, description, email);
+           emailSent = true;
+        } catch (mailError) {
+           console.error("Mail send error:", mailError);
+        }
+     }
+
+     try {
+       await db.collection('feedback').add({
+          module,
+          description,
+          imageBase64: imageBase64 || null,
+          userEmail: email,
+          timestamp: FieldValue.serverTimestamp()
+       });
+     } catch(dbError: any) {
+        console.error("Firebase save failed:", dbError.message);
+        // Throw only if we didn't manage to send an email either
+        if (!emailSent && !process.env.SMTP_EMAIL) throw dbError; 
+     }
+     
+     res.json({ success: true });
+  } catch(e: any) {
+     logError(e, req);
+     res.status(500).json({ error: e.message });
+  }
+});
 
 // API Routes
 app.get('/api/auth/url', (req, res) => {
@@ -485,34 +523,59 @@ app.post('/api/cowork/chat', async (req, res) => {
   }
 
   try {
-    // 1. Fetch Admin Configs
-    const promptDoc = await db.collection('adminConfig').doc('coworkSystemPrompt').get();
-    const templatesDoc = await db.collection('adminConfig').doc('docTemplates').get();
-    const modelConfigDoc = await db.collection('adminConfig').doc('modelSettings').get();
-    
-    const adminPrompt = promptDoc.exists ? promptDoc.data()?.current : '';
-    const templates = templatesDoc.exists ? templatesDoc.data()?.templates || [] : [];
-    const modelSettings = modelConfigDoc.exists ? modelConfigDoc.data() : null;
-    const dailyQuota = modelSettings?.dailyQuotaPerUser || 50;
+    // 1. Fetch Admin Configs (with fallback if DB quota is exceeded)
+    let adminPrompt = '';
+    let templates: any[] = [];
+    let modelSettings: any = null;
+    let dailyQuota = 50;
 
-    // 2. Check Quota
+    try {
+      const [{ getCachedOrFetch }] = await Promise.all([
+        import('./src/utils/cache.ts')
+      ]);
+
+      adminPrompt = await getCachedOrFetch('admin:coworkSystemPrompt', 300, async () => {
+        const doc = await db.collection('adminConfig').doc('coworkSystemPrompt').get();
+        return doc.exists ? doc.data()?.current || '' : '';
+      });
+
+      templates = await getCachedOrFetch('admin:docTemplates', 300, async () => {
+        const doc = await db.collection('adminConfig').doc('docTemplates').get();
+        return doc.exists ? doc.data()?.templates || [] : [];
+      });
+
+      modelSettings = await getCachedOrFetch('admin:modelSettings', 300, async () => {
+        const doc = await db.collection('adminConfig').doc('modelSettings').get();
+        return doc.exists ? doc.data() : null;
+      });
+
+      dailyQuota = modelSettings?.dailyQuotaPerUser || 50;
+    } catch(e) {
+      console.warn("DB Quota exceeded or error fetching admin configs. Defaulting Cowork params.", e);
+    }
+
+    // 2. Check Quota (soft fail if DB limits reached)
     const todayStr = new Date().toISOString().split('T')[0];
     const quotaRef = db.collection('userQuotas').doc(uid);
-    const quotaDoc = await quotaRef.get();
     let currentCount = 0;
-    if (quotaDoc.exists) {
-       const quotaData = quotaDoc.data();
-       if (quotaData?.date === todayStr) {
-           currentCount = quotaData.count || 0;
-       }
-    }
-    
-    if (currentCount >= dailyQuota) {
-        return res.status(429).json({ error: `You have reached your daily limit of ${dailyQuota} Cowork messages.` });
-    }
+    try {
+      const quotaDoc = await quotaRef.get();
+      if (quotaDoc.exists) {
+         const quotaData = quotaDoc.data();
+         if (quotaData?.date === todayStr) {
+             currentCount = quotaData.count || 0;
+         }
+      }
+      
+      if (currentCount >= dailyQuota) {
+          return res.status(429).json({ error: `You have reached your daily limit of ${dailyQuota} Cowork messages.` });
+      }
 
-    // Increment Quota
-    await quotaRef.set({ date: todayStr, count: currentCount + 1 }, { merge: true });
+      // Increment Quota
+      await quotaRef.set({ date: todayStr, count: currentCount + 1 }, { merge: true });
+    } catch(e) {
+      console.warn("DB Quota exceeded while checking Cowork quotas. Allowing chat to pass through.");
+    }
 
     const formattedMessages = messages.map((m: any) => {
       let msgText = m.content || '';
@@ -815,9 +878,23 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  const portToListen = process.env.PORT || 8080;
+  app.listen(portToListen as number, "0.0.0.0", () => {
+    console.log(`Server listening on port ${portToListen}`);
+  }).on('error', (err) => {
+    console.error("Express server error:", err);
   });
 }
 
-startServer();
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+
+startServer().catch(err => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
+});
